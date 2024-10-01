@@ -1,0 +1,66 @@
+pip install python-telegram-bot gspread oauth2client
+
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+# Подключение к Google Sheets
+def connect_to_google_sheets():
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+    client = gspread.authorize(creds)
+    sheet = client.open("Salon Appointments").sheet1  # Название таблицы
+    return sheet
+
+# Команда /start
+def start(update: Update, context: CallbackContext) -> None:
+    reply_keyboard = [['Записаться на услугу']]
+    markup = ReplyKeyboardMarkup(reply_keyboard, one_time_keyboard=True)
+    update.message.reply_text(
+        "Привет! Добро пожаловать в салон наращивания ресниц. Мы работаем каждый день с 9:00 до 19:00. Нажмите кнопку ниже, чтобы записаться.",
+        reply_markup=markup
+    )
+
+# Запись клиента
+def book_appointment(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text('Пожалуйста, отправьте ваше имя.')
+    context.user_data['state'] = 'waiting_for_name'
+
+def handle_message(update: Update, context: CallbackContext) -> None:
+    state = context.user_data.get('state')
+
+    if state == 'waiting_for_name':
+        context.user_data['name'] = update.message.text
+        update.message.reply_text('Введите дату и время (например, 12.10.2024, 14:00).')
+        context.user_data['state'] = 'waiting_for_datetime'
+    
+    elif state == 'waiting_for_datetime':
+        context.user_data['datetime'] = update.message.text
+        update.message.reply_text('Введите ваш номер телефона.')
+        context.user_data['state'] = 'waiting_for_phone'
+    
+    elif state == 'waiting_for_phone':
+        context.user_data['phone'] = update.message.text
+
+        # Сохранение данных в Google Sheets
+        sheet = connect_to_google_sheets()
+        sheet.append_row([context.user_data['name'], context.user_data['datetime'], context.user_data['phone']])
+
+        update.message.reply_text('Вы успешно записаны!')
+        context.user_data.clear()
+
+# Запуск бота
+def main():
+    updater = Updater("YOUR_TELEGRAM_BOT_TOKEN", use_context=True)
+
+    dp = updater.dispatcher
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, handle_message))
+    dp.add_handler(MessageHandler(Filters.regex('Записаться на услугу'), book_appointment))
+
+    updater.start_polling()
+    updater.idle()
+
+if __name__ == '__main__':
+    main()
